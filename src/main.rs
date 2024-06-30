@@ -145,7 +145,7 @@ mod handshake_test {
     }
 
     #[tokio::test]
-    async fn handshake_verack_then_version() {
+    async fn message_sequence_1() {
         let TestSetup {
             mut writer_rx,
             reader_tx,
@@ -157,7 +157,7 @@ mod handshake_test {
         // Send VerAck
         let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
         reader_tx
-            .send(ack_packet)
+            .send(ack_packet.clone())
             .expect("Failed to send ACK message");
 
         // Send Version
@@ -167,13 +167,14 @@ mod handshake_test {
             .expect("Failed to send message");
 
         // Recv VerAck
-        writer_rx.recv().await.expect("Failed to get ACK message");
+        let ack = writer_rx.recv().await.expect("Failed to get ACK message");
+        assert_eq!(ack, ack_packet);
 
         jh.await.expect("task failed");
     }
 
     #[tokio::test]
-    async fn handshake_version_then_verack() {
+    async fn message_sequence_2() {
         let TestSetup {
             mut writer_rx,
             reader_tx,
@@ -191,17 +192,18 @@ mod handshake_test {
         // Send VerAck
         let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
         reader_tx
-            .send(ack_packet)
+            .send(ack_packet.clone())
             .expect("Failed to send ACK message");
 
         // Recv VerAck
-        writer_rx.recv().await.expect("Failed to get ACK message");
+        let ack = writer_rx.recv().await.expect("Failed to get ACK message");
+        assert_eq!(ack, ack_packet);
 
         jh.await.expect("task failed");
     }
 
     #[tokio::test]
-    async fn handshake_version_then_verack2() {
+    async fn message_sequence_3() {
         let TestSetup {
             mut writer_rx,
             reader_tx,
@@ -217,10 +219,11 @@ mod handshake_test {
             .expect("Failed to send message");
 
         // Recv VerAck
-        writer_rx.recv().await.expect("Failed to get ACK message");
+        let ack = writer_rx.recv().await.expect("Failed to get ACK message");
 
         // Send VerAck
         let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
+        assert_eq!(ack, ack_packet);
         reader_tx
             .send(ack_packet)
             .expect("Failed to send ACK message");
