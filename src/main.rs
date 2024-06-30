@@ -25,7 +25,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     if std::env::var_os("RUST_LOG").is_none() {
-        std::env::set_var("RUST_LOG", "warn,typestate=debug")
+        std::env::set_var("RUST_LOG", "warn,typestate-bitcoin-handshake=debug")
     }
     tracing_subscriber::fmt::init();
 
