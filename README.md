@@ -31,6 +31,21 @@ The `Version` message of the local host is the first message that starts the han
 know if the `VerAck` or the `Version` will come first. We just need to make sure that each `Version` message
 will be followed by an `VerAck` message.
 
+## Typestate
+```
+Init 
+  -> Sent Version
+	-> choice Receive VerAck Or Version {	
+    VerAck
+      -> Receive Version
+      -> Sent VerAck
+		Version
+      -> Sent VerAck
+      -> Wait VerAck
+	}
+	-> Complete
+```
+
 ## State Machine
 The state machine that is develop in the code.
 
@@ -50,9 +65,9 @@ The state machine that is develop in the code.
                                  │Send VerAck│     └───┬───────┘
                                  └───┬───────┘         │
                                      ▼                 ▼
-                                 ┌───────────┐       ┌────┐
-                                 │Wait VerArk├──────►│DONE│
-                                 └───────────┘       └────┘
+                                 ┌───────────┐       ┌────────┐
+                                 │Wait VerArk├──────►│Complete│
+                                 └───────────┘       └────────┘
 ```
 
 ## How to run
