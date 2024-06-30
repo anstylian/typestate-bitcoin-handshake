@@ -12,7 +12,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, instrument, warn};
 
 /// Make the address bits in VERSION message set to zero.
 const ZERO_SOCK_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
@@ -20,8 +20,8 @@ const ZERO_SOCK_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0
 /// Handshake is the core of our design. This is a wrapper that holds our current state, and a
 /// stream to communicate with the other Peers
 pub struct Handshake<S> {
-    pub stream: SendRecv,
-    pub state: S,
+    stream: SendRecv,
+    state: S,
 }
 
 /// The initial state.
@@ -83,9 +83,10 @@ impl Handshake<Initial> {
         }
     }
 
-    #[instrument(skip_all)]
+    // #[instrument(skip(self), fields(self.address = %self.address))]
+    #[instrument(skip(self))]
     pub fn sent_version(self, address: SocketAddr) -> Result<Handshake<SendVersion>> {
-        info!("Sending Version");
+        debug!("Sending Version");
         let version_message = get_version_message(&address)?;
         let packet = RawNetworkMessage::new(
             Network::Bitcoin.magic(),
@@ -104,7 +105,7 @@ impl Handshake<Initial> {
 impl Handshake<SendVersion> {
     #[instrument(skip_all)]
     pub async fn receive_message(mut self) -> Result<Handshake<Received>> {
-        info!("Wait Msg");
+        debug!("Wait for message");
         while let Some(msg) = self.stream.receiver.recv().await {
             debug!("Receive {msg:?}");
             let msg = read_message(msg);
@@ -119,7 +120,7 @@ impl Handshake<SendVersion> {
             }
         }
 
-        eyre::bail!("Unexcpected TODO")
+        eyre::bail!("Unexcpected sequence")
     }
 }
 
@@ -150,6 +151,7 @@ impl Handshake<SentAck> {
     /// Send `VerAck` and go to the next state to wait for `VerAck`.
     #[instrument(skip_all)]
     pub async fn send_ack(self) -> Result<Handshake<WaitAck>> {
+        debug!("Sent VerAck");
         let packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
         self.stream.sender.send(packet)?;
         return Ok(Handshake {
@@ -167,6 +169,7 @@ impl Handshake<WaitAck> {
             let msg = read_message(msg);
             match msg {
                 Some(Received::VerAck) => {
+                    debug!("Received VerAck");
                     break;
                 }
                 Some(Received::Version) => {
@@ -193,6 +196,7 @@ impl Handshake<WaitVersion> {
                     warn!("Something is wrong. Receive VerAck twice");
                 }
                 Some(Received::Version) => {
+                    debug!("Received Version");
                     break;
                 }
                 None => { /* ignore */ }
@@ -209,6 +213,7 @@ impl Handshake<AckAfterVersion> {
     /// Sent `VerAck` and complete
     #[instrument(skip_all)]
     pub async fn send_ack(self) -> Result<Handshake<Completed>> {
+        debug!("Sent VerAck");
         let packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
         self.stream.sender.send(packet)?;
         return Ok(Handshake {
@@ -224,15 +229,18 @@ fn read_message(package: RawNetworkMessage) -> Option<Received> {
     let msg_type = package.cmd().to_string();
     match package.payload() {
         NetworkMessage::Verack => {
-            debug!("Recv Verack");
+            debug!("Receive Verack");
             Some(Received::VerAck)
         }
         NetworkMessage::Version(v) => {
-            debug!("Recv Version: {:?}", v);
+            debug!("Receive Version: {:?}", v);
             Some(Received::Version)
         }
         _ => {
-            warn!("received message type not part of handshake: {}", msg_type);
+            warn!(
+                "Received message type not part of handshake: {:?}",
+                msg_type
+            );
             None
         }
     }

@@ -9,7 +9,7 @@ use tokio::{
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
 };
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{error, instrument, trace, warn};
 
 /// Handle incoming messages from the connection.
 #[instrument(skip_all)]
@@ -28,11 +28,11 @@ pub async fn stream_reader(
                     // error!("TCP stream closed");
                 }
                 Ok(n) => {
-                    debug!("Bytes read {n}");
+                    trace!("Bytes read {n}");
                     let mut total_consumed = 0;
                     while total_consumed < n {
                         let (msg, consumed) = deserialize_partial(&buf[total_consumed..n])?;
-                        debug!(
+                        trace!(
                             "Deserilization consumed {} out of {n} bytes",
                             consumed + total_consumed
                         );
@@ -48,7 +48,7 @@ pub async fn stream_reader(
                     continue;
                 }
                 Err(e) => {
-                    error!("stream reader returned 4");
+                    error!("Read failed with: {e:?}");
                     return Err(e.into());
                 }
             }
@@ -70,17 +70,19 @@ pub async fn stream_writer(
             loop {
                 match writer.try_write(&buf) {
                     Ok(n) if n < buf.len() => {
+                        // TODO: this should be handle
                         warn!("Only a part of the buffer is send. Data will be missing");
                         break;
                     }
                     Ok(_) => {
-                        debug!("Bytes writter ok to stream");
+                        trace!("Bytes writter ok to stream");
                         break;
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         continue;
                     }
                     Err(e) => {
+                        error!("Write failed with: {e:?}");
                         return Err(e.into());
                     }
                 }

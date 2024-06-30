@@ -30,7 +30,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     if std::env::var_os("RUST_LOG").is_none() {
-        std::env::set_var("RUST_LOG", "warn,typestate-bitcoin-handshake=debug")
+        std::env::set_var("RUST_LOG", "warn,typestate_bitcoin_handshake=info")
     }
     tracing_subscriber::fmt::init();
 
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
         .collect();
 
     join_all(streams).await;
-    info!("TOTAL Elpased time -->{:#?}", now.elapsed());
+    info!("Total elpased time {:#?}", now.elapsed());
 
     Ok(())
 }
@@ -67,9 +67,11 @@ async fn handshake(address: SocketAddr) -> Result<()> {
 
     typestate(address, writer_tx, reader_rx).await?;
 
+    // Not need to keep the connection longer. Just abort the tasks
     reader_jh.abort();
     writer_jh.abort();
-    info!("Elpased -->{:#?}", now.elapsed());
+
+    info!("Handshake completed in {:#?}", now.elapsed());
 
     Ok(())
 }
