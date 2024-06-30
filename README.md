@@ -8,6 +8,7 @@ that our flow is valid
 ## Bitcoin handshake
 The handshake of bitcoin is simple. 
 
+```
 ┌─────┐               ┌──────┐
 │Local│               │Remote│
 └──┬──┘               └───┬──┘
@@ -23,6 +24,7 @@ The handshake of bitcoin is simple.
 ┌──┴──┐               ┌───┴──┐
 │Local│               │Remote│
 └─────┘               └──────┘
+```
 
 The protocol has no guarantees for the messages order. 
 The `Version` message of the local host is the first message that starts the handshake, but we can not 
@@ -32,6 +34,7 @@ will be followed by an `VerAck` message.
 ## State Machine
 The state machine that is develop in the code.
 
+```
                                 ┌────────┐      ┌──────┐
 ┌───────┐       ┌───────┐       │Choice  ├─────►│VerAck│
 │Initial├──────►│Version├──────►│ VerAck │      └────┬─┘
@@ -50,6 +53,7 @@ The state machine that is develop in the code.
                                  ┌───────────┐       ┌────┐
                                  │Wait VerArk├──────►│DONE│
                                  └───────────┘       └────┘
+```
 
 ## How to run
 Assuming you already have rust installed
