@@ -56,7 +56,7 @@ The state machine that is develop in the code.
 ```
 
 ## How to run
-Assuming you already have rust installed
+Assuming you already have Rust installed.
 
 ### Using `cargo`
 
