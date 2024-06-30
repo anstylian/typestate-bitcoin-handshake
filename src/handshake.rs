@@ -14,25 +14,51 @@ use std::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, instrument, warn};
 
-/// This is usesed to make the address bits in VERSION message set to Zero
+/// Usesed to make the address bits in VERSION message set to zero.
 const ZERO_SOCK_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
 
+/// Handshake is the core of our design. This is a wrapper that holds our current state, and a
+/// stream to communicate with the other Peers
 pub struct Handshake<S> {
     pub stream: SendRecv,
     pub state: S,
 }
 
-// Define the different states
+/// The initial state.
+/// Here we have the connection, and our transission is happening when we are sending our version
+/// to the remote peer. The next state is [`SendVersion`].
 pub struct Initial;
-pub struct SentVersion;
+
+/// The version is send and we are waitting for a response.
+/// The response we are interested to go to the next state is [`Received::VerAck`] or [`Received::Version`].
+pub struct SendVersion;
+
+/// This describes a choice. We can not know what message will come first, the acknowledgement or
+/// the version.
+///
+/// If [`Received::VerAck`] is received the next state will be [`ReceiveVersion`] where we will wait for the remote [`Received::Version`].
+/// If [`Received::Version`] is received we go to `SentAck` to sent an acknowledgement for the version we
+/// received.
 pub enum Received {
+    /// VerArk is received
     VerAck,
+    /// Version is received
     Version,
 }
+
+/// We [`SentAck`] and then we go to [`ReceiveAck`] to wait for our acknowledgement.
 pub struct SentAck;
+
+/// TODO
 pub struct AckAfterVersion;
+
+/// We wait for remote [`Received::Version`].
 pub struct ReceiveVersion;
+
+/// We wait for the acknowledgement message.
 pub struct ReceiveAck;
+
+/// When we reach `Compeleted` the handshake is done.
 pub struct Completed;
 
 pub struct SendRecv {
@@ -58,7 +84,7 @@ impl Handshake<Initial> {
     }
 
     #[instrument(skip_all)]
-    pub fn send_version(self, address: SocketAddr) -> Result<Handshake<SentVersion>> {
+    pub fn sent_version(self, address: SocketAddr) -> Result<Handshake<SendVersion>> {
         info!("Sending Version");
         let version_message = version_message(&address)?;
         let packet = RawNetworkMessage::new(
@@ -70,17 +96,17 @@ impl Handshake<Initial> {
 
         Ok(Handshake {
             stream: self.stream,
-            state: SentVersion,
+            state: SendVersion,
         })
     }
 }
 
-impl Handshake<SentVersion> {
+impl Handshake<SendVersion> {
     #[instrument(skip_all)]
     pub async fn receive_message(mut self) -> Result<Handshake<Received>> {
         info!("Wait Msg");
         while let Some(msg) = self.stream.receiver.recv().await {
-            debug!("Receive -->{msg:?}");
+            debug!("Receive {msg:?}");
             let msg = read_message(msg);
             match msg {
                 Some(m) => {
@@ -185,6 +211,7 @@ impl Handshake<Received> {
     }
 }
 
+/// Translate received message into our types
 #[instrument(skip_all)]
 fn read_message(package: RawNetworkMessage) -> Option<Received> {
     let msg_type = package.cmd().to_string();
