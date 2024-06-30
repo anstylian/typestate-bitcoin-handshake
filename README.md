@@ -35,15 +35,15 @@ will be followed by an `VerAck` message.
 ```
 Init 
   -> Sent Version
-	-> choice Receive VerAck Or Version {	
+  -> choice Receive VerAck Or Version {	
     VerAck
       -> Wait for Version
       -> Sent VerAck
-		Version
+    Version
       -> Sent VerAck
       -> Wait for VerAck
-	}
-	-> Complete
+  }
+  -> Complete
 ```
 
 ## State Machine
