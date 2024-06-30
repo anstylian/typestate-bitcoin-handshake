@@ -14,7 +14,7 @@ use std::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, instrument, warn};
 
-/// Usesed to make the address bits in VERSION message set to zero.
+/// Make the address bits in VERSION message set to zero.
 const ZERO_SOCK_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
 
 /// Handshake is the core of our design. This is a wrapper that holds our current state, and a
@@ -25,7 +25,7 @@ pub struct Handshake<S> {
 }
 
 /// The initial state.
-/// Here we have the connection, and our transission is happening when we are sending our version
+/// Here we have the connection, and our transitions is happening when we are sending our version
 /// to the remote peer. The next state is [`SendVersion`].
 pub struct Initial;
 
@@ -58,7 +58,7 @@ pub struct ReceiveVersion;
 /// We wait for the acknowledgement message.
 pub struct ReceiveAck;
 
-/// When we reach `Compeleted` the handshake is done.
+/// When we reach `Completed` the handshake is done.
 pub struct Completed;
 
 pub struct SendRecv {
@@ -234,10 +234,10 @@ fn read_message(package: RawNetworkMessage) -> Option<Received> {
 /// Construct the Version Message
 ///
 /// Parts
-/// The first four are the messge header
+/// The first four are the message header
 /// 1. Magic bytes: static sequence of bytes, to indicate the start of the message (0xf9 0xbe 0xb4
 ///    0xd9), 4 bytes
-/// 2. Command: "version" as ascii bytes, 12 bytes
+/// 2. Command: "version" as ASCII bytes, 12 bytes
 /// 3. Size: as little-endian, 4 bytes
 /// 4. Checksum: 4 bytes
 ///
@@ -246,9 +246,9 @@ fn read_message(package: RawNetworkMessage) -> Option<Received> {
 /// Protocol Version: little-endian, 4 bytes
 /// Services: 8 bytes, bit-filed, little-endian, indicating the supported services of the node. (we
 ///     can use 0 for testing)
-/// Time: our local Unix timestamp
+/// Time: our local Unix timestamps
 /// Remote Services: 8 bytes, use 0 for the moment
-/// Remote IP: ipv6, big-endian 16-bytes
+/// Remote IP: IPv6, big-endian 16-bytes
 /// Remote Port: 2 bytes, big-endian
 /// Local Services:
 /// Local IP:

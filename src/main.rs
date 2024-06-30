@@ -14,10 +14,10 @@ use crate::{
 };
 
 #[derive(FromArgs, PartialEq, Debug)]
-/// Implementatation of the bitcoin P2P handshake.
+/// Implementation of the bitcoin P2P handshake.
 /// This implementation is a show case of typestate pattern
 struct Args {
-    /// bitcoin node ip address
+    /// bitcoin node IP address
     #[argh(positional)]
     address: Vec<SocketAddr>,
 }
