@@ -86,7 +86,7 @@ impl Handshake<Initial> {
     #[instrument(skip_all)]
     pub fn sent_version(self, address: SocketAddr) -> Result<Handshake<SendVersion>> {
         info!("Sending Version");
-        let version_message = version_message(&address)?;
+        let version_message = get_version_message(&address)?;
         let packet = RawNetworkMessage::new(
             Network::Bitcoin.magic(),
             NetworkMessage::Version(version_message),
@@ -238,6 +238,40 @@ fn read_message(package: RawNetworkMessage) -> Option<Received> {
     }
 }
 
+#[cfg(test)]
+pub fn static_version_message_package() -> RawNetworkMessage {
+    let unix_epoch = 0;
+
+    let remote_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
+    let remote_address = bitcoin::p2p::Address::new(&remote_address, ServiceFlags::NONE);
+    let zero_bitcoin_address = bitcoin::p2p::Address::new(&ZERO_SOCK_ADDRESS, ServiceFlags::NONE);
+
+    let version_message = version_message(remote_address, zero_bitcoin_address, unix_epoch);
+
+    RawNetworkMessage::new(
+        Network::Bitcoin.magic(),
+        NetworkMessage::Version(version_message),
+    )
+}
+
+fn get_version_message(remote_address: &SocketAddr) -> Result<VersionMessage> {
+    let unix_epoch: i64 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs()
+        .try_into()?;
+
+    let remote_address: bitcoin::p2p::Address =
+        bitcoin::p2p::Address::new(remote_address, ServiceFlags::NONE);
+
+    let zero_bitcoin_address = bitcoin::p2p::Address::new(&ZERO_SOCK_ADDRESS, ServiceFlags::NONE);
+
+    Ok(version_message(
+        remote_address,
+        zero_bitcoin_address,
+        unix_epoch,
+    ))
+}
+
 /// Construct the Version Message
 ///
 /// Parts
@@ -262,24 +296,18 @@ fn read_message(package: RawNetworkMessage) -> Option<Received> {
 /// Nonce:
 /// User Agent:
 /// Last Block:
-fn version_message(remote_address: &SocketAddr) -> Result<VersionMessage> {
-    let unix_epoch: i64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs()
-        .try_into()?;
-
-    let remote_address: bitcoin::p2p::Address =
-        bitcoin::p2p::Address::new(remote_address, ServiceFlags::NONE);
-
-    let zero_bitcoin_address = bitcoin::p2p::Address::new(&ZERO_SOCK_ADDRESS, ServiceFlags::NONE);
-
-    Ok(VersionMessage::new(
+fn version_message(
+    remote_address: bitcoin::p2p::Address,
+    local_address: bitcoin::p2p::Address,
+    unix_epoch: i64,
+) -> VersionMessage {
+    VersionMessage::new(
         ServiceFlags::NONE,
         unix_epoch,
         remote_address,
-        zero_bitcoin_address,
+        local_address,
         0,
         "TEST NODE".to_string(),
         0,
-    ))
+    )
 }

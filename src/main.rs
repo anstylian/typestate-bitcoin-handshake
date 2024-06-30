@@ -1,8 +1,13 @@
 use argh::FromArgs;
+use bitcoin::p2p::message::RawNetworkMessage;
 use eyre::Result;
 use futures::future::join_all;
 use std::net::SocketAddr;
-use tokio::{net::TcpStream, sync::mpsc, time::Instant};
+use tokio::{
+    net::TcpStream,
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    time::Instant,
+};
 use tracing::{info, instrument};
 
 mod connection_handler;
@@ -60,13 +65,26 @@ async fn handshake(address: SocketAddr) -> Result<()> {
     let reader_jh = tokio::task::spawn(stream_reader(reader, reader_tx));
     let writer_jh = tokio::task::spawn(stream_writer(writer, writer_rx));
 
+    typestate(address, writer_tx, reader_rx).await?;
+
+    reader_jh.abort();
+    writer_jh.abort();
+    info!("Elpased -->{:#?}", now.elapsed());
+
+    Ok(())
+}
+
+async fn typestate(
+    address: SocketAddr,
+    writer_tx: UnboundedSender<RawNetworkMessage>,
+    reader_rx: UnboundedReceiver<RawNetworkMessage>,
+) -> Result<Handshake<Completed>> {
     let messge_received = Handshake::<Initial>::new(SendRecv::new(writer_tx, reader_rx))
         .sent_version(address)?
         .receive_message()
         .await?;
 
-    // specify the expected type just to make sure that we reach the complete state
-    let _: Handshake<Completed> = match messge_received.choice() {
+    let res = match messge_received.choice() {
         Received::VerAck => {
             messge_received
                 .receive_ver_state()
@@ -85,9 +103,128 @@ async fn handshake(address: SocketAddr) -> Result<()> {
         }
     };
 
-    reader_jh.abort();
-    writer_jh.abort();
-    info!("Elpased -->{:#?}", now.elapsed());
+    Ok(res)
+}
 
-    Ok(())
+#[cfg(test)]
+mod handshake_test {
+    use bitcoin::{
+        p2p::message::{NetworkMessage, RawNetworkMessage},
+        Network,
+    };
+    use std::net::{IpAddr, Ipv4Addr};
+    use tokio::{
+        sync::mpsc::{UnboundedReceiver, UnboundedSender},
+        task::JoinHandle,
+    };
+
+    use super::*;
+
+    struct TestSetup {
+        writer_rx: UnboundedReceiver<RawNetworkMessage>,
+        reader_tx: UnboundedSender<RawNetworkMessage>,
+        jh: JoinHandle<()>,
+    }
+
+    fn test_setup() -> TestSetup {
+        let (writer_tx, writer_rx) = mpsc::unbounded_channel();
+        let (reader_tx, reader_rx) = mpsc::unbounded_channel();
+
+        let jh: JoinHandle<()> = tokio::task::spawn(async {
+            let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
+            typestate(address, writer_tx, reader_rx)
+                .await
+                .expect("Typestate Failed");
+        });
+
+        TestSetup {
+            writer_rx,
+            reader_tx,
+            jh,
+        }
+    }
+
+    #[tokio::test]
+    async fn handshake_verack_then_version() {
+        let TestSetup {
+            mut writer_rx,
+            reader_tx,
+            jh,
+        } = test_setup();
+
+        writer_rx.recv().await.expect("Failed to get Version");
+
+        // Send VerAck
+        let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
+        reader_tx
+            .send(ack_packet)
+            .expect("Failed to send ACK message");
+
+        // Send Version
+        let remote_version = static_version_message_package();
+        reader_tx
+            .send(remote_version)
+            .expect("Failed to send message");
+
+        // Recv VerAck
+        writer_rx.recv().await.expect("Failed to get ACK message");
+
+        jh.await.expect("task failed");
+    }
+
+    #[tokio::test]
+    async fn handshake_version_then_verack() {
+        let TestSetup {
+            mut writer_rx,
+            reader_tx,
+            jh,
+        } = test_setup();
+
+        writer_rx.recv().await.expect("Failed to get Version");
+
+        // Send Version
+        let remote_version = static_version_message_package();
+        reader_tx
+            .send(remote_version)
+            .expect("Failed to send message");
+
+        // Send VerAck
+        let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
+        reader_tx
+            .send(ack_packet)
+            .expect("Failed to send ACK message");
+
+        // Recv VerAck
+        writer_rx.recv().await.expect("Failed to get ACK message");
+
+        jh.await.expect("task failed");
+    }
+
+    #[tokio::test]
+    async fn handshake_version_then_verack2() {
+        let TestSetup {
+            mut writer_rx,
+            reader_tx,
+            jh,
+        } = test_setup();
+
+        writer_rx.recv().await.expect("Failed to get Version");
+
+        // Send Version
+        let remote_version = static_version_message_package();
+        reader_tx
+            .send(remote_version)
+            .expect("Failed to send message");
+
+        // Recv VerAck
+        writer_rx.recv().await.expect("Failed to get ACK message");
+
+        // Send VerAck
+        let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
+        reader_tx
+            .send(ack_packet)
+            .expect("Failed to send ACK message");
+
+        jh.await.expect("task failed");
+    }
 }
