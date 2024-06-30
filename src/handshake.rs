@@ -46,17 +46,17 @@ pub enum Received {
     Version,
 }
 
-/// We [`SentAck`] and then we go to [`ReceiveAck`] to wait for our acknowledgement.
+/// We use [`SentAck`] and then we go to [`WaitAck`] to wait for our acknowledgement.
 pub struct SentAck;
 
-/// TODO
+/// When we get the remote Version we come to this state to send the acknowledgement.
 pub struct AckAfterVersion;
 
 /// We wait for remote [`Received::Version`].
-pub struct ReceiveVersion;
+pub struct WaitVersion;
 
 /// We wait for the acknowledgement message.
-pub struct ReceiveAck;
+pub struct WaitAck;
 
 /// When we reach `Completed` the handshake is done.
 pub struct Completed;
@@ -123,19 +123,44 @@ impl Handshake<SendVersion> {
     }
 }
 
+impl Handshake<Received> {
+    /// If Version is received first, use this to go at the next state to send `VerAck`.
+    pub fn send_ack_state(self) -> Handshake<SentAck> {
+        Handshake {
+            stream: self.stream,
+            state: SentAck,
+        }
+    }
+
+    /// If `VerAck` is received first, use this to go at the next state to wait for the remote
+    /// `Version`.
+    pub fn receive_ver_state(self) -> Handshake<WaitVersion> {
+        Handshake {
+            stream: self.stream,
+            state: WaitVersion,
+        }
+    }
+
+    pub fn choice(&self) -> &Received {
+        &self.state
+    }
+}
+
 impl Handshake<SentAck> {
+    /// Send `VerAck` and go to the next state to wait for `VerAck`.
     #[instrument(skip_all)]
-    pub async fn send_ack(self) -> Result<Handshake<ReceiveAck>> {
+    pub async fn send_ack(self) -> Result<Handshake<WaitAck>> {
         let packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
         self.stream.sender.send(packet)?;
         return Ok(Handshake {
             stream: self.stream,
-            state: ReceiveAck,
+            state: WaitAck,
         });
     }
 }
 
-impl Handshake<ReceiveAck> {
+impl Handshake<WaitAck> {
+    /// Get `VerArc` and complete.
     #[instrument(skip_all)]
     pub async fn receive_ack(mut self) -> Result<Handshake<Completed>> {
         while let Some(msg) = self.stream.receiver.recv().await {
@@ -157,7 +182,8 @@ impl Handshake<ReceiveAck> {
     }
 }
 
-impl Handshake<ReceiveVersion> {
+impl Handshake<WaitVersion> {
+    /// Wait for remote Version
     #[instrument(skip_all)]
     pub async fn receive_version(mut self) -> Handshake<AckAfterVersion> {
         while let Some(msg) = self.stream.receiver.recv().await {
@@ -180,6 +206,7 @@ impl Handshake<ReceiveVersion> {
     }
 }
 impl Handshake<AckAfterVersion> {
+    /// Sent `VerAck` and complete
     #[instrument(skip_all)]
     pub async fn send_ack(self) -> Result<Handshake<Completed>> {
         let packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
@@ -188,26 +215,6 @@ impl Handshake<AckAfterVersion> {
             stream: self.stream,
             state: Completed,
         });
-    }
-}
-
-impl Handshake<Received> {
-    pub fn send_ack_state(self) -> Handshake<SentAck> {
-        Handshake {
-            stream: self.stream,
-            state: SentAck,
-        }
-    }
-
-    pub fn receive_ver_state(self) -> Handshake<ReceiveVersion> {
-        Handshake {
-            stream: self.stream,
-            state: ReceiveVersion,
-        }
-    }
-
-    pub fn choice(&self) -> &Received {
-        &self.state
     }
 }
 

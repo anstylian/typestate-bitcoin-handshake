@@ -65,7 +65,8 @@ async fn handshake(address: SocketAddr) -> Result<()> {
         .receive_message()
         .await?;
 
-    let _completed: Handshake<Completed> = match messge_received.choice() {
+    // specify the expected type just to make sure that we reach the complete state
+    let _: Handshake<Completed> = match messge_received.choice() {
         Received::VerAck => {
             messge_received
                 .receive_ver_state()

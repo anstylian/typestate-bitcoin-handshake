@@ -37,11 +37,11 @@ Init
   -> Sent Version
 	-> choice Receive VerAck Or Version {	
     VerAck
-      -> Receive Version
+      -> Wait for Version
       -> Sent VerAck
 		Version
       -> Sent VerAck
-      -> Wait VerAck
+      -> Wait for VerAck
 	}
 	-> Complete
 ```
