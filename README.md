@@ -8,22 +8,22 @@ that our flow is valid
 ## Bitcoin handshake
 The handshake of bitcoin is simple. 
 
-```
-┌─────┐               ┌──────┐
-│Local│               │Remote│
-└──┬──┘               └───┬──┘
-   │       Version        │
-   │─────────────────────►│
-   │       VerAck         │
-   │◄─────────────────────│
-   │       Version        │
-   │◄─────────────────────│
-   │       VerAck         │
-   │─────────────────────►│
-   │                      │
-┌──┴──┐               ┌───┴──┐
-│Local│               │Remote│
-└─────┘               └──────┘
+```text
+ ┌─────┐               ┌──────┐
+ │Local│               │Remote│
+ └──┬──┘               └───┬──┘
+    │       Version        │
+    │─────────────────────►│
+    │       VerAck         │
+    │◄─────────────────────│
+    │       Version        │
+    │◄─────────────────────│
+    │       VerAck         │
+    │─────────────────────►│
+    │                      │
+ ┌──┴──┐               ┌───┴──┐
+ │Local│               │Remote│
+ └─────┘               └──────┘
 ```
 
 The protocol has no guarantees for the messages order. 
@@ -32,7 +32,7 @@ know if the `VerAck` or the `Version` will come first. We just need to make sure
 will be followed by an `VerAck` message.
 
 ## Typestate
-```
+```tet
 Init 
   -> Sent Version
   -> choice Receive VerAck Or Version {	
@@ -49,7 +49,7 @@ Init
 ## State Machine
 The state machine that is develop in the code.
 
-```
+```text
                                 ┌────────┐      ┌──────┐
 ┌───────┐       ┌───────┐       │Choice  ├─────►│VerAck│
 │Initial├──────►│Version├──────►│ VerAck │      └────┬─┘
