@@ -36,7 +36,7 @@ pub struct SendVersion;
 /// This describes a choice. We can not know what message will come first, the acknowledgement or
 /// the version.
 ///
-/// If [`Received::VerAck`] is received the next state will be [`ReceiveVersion`] where we will wait for the remote [`Received::Version`].
+/// If [`Received::VerAck`] is received the next state will be [`WaitVersion`] where we will wait for the remote [`Received::Version`].
 /// If [`Received::Version`] is received we go to `SentAck` to sent an acknowledgement for the version we
 /// received.
 pub enum Received {
@@ -162,7 +162,7 @@ impl Handshake<SentAck> {
 }
 
 impl Handshake<WaitAck> {
-    /// Get `VerArc` and complete.
+    /// Get `VerAck` and complete.
     #[instrument(skip_all)]
     pub async fn receive_ack(mut self) -> Result<Handshake<Completed>> {
         while let Some(msg) = self.stream.receiver.recv().await {

@@ -2,7 +2,7 @@
 
 ## Why Typestate?
 Typestate is a design pattern that allows as to leverage the type system 
-and describe the our flow. The benefit is that at compile time we will know 
+and describe our flow. The benefit is that at compile time we will know 
 that our flow is valid
 
 ## Bitcoin handshake

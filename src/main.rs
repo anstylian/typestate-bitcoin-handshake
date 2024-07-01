@@ -1,3 +1,55 @@
+//! Typestate Bitcoin Handshake
+//!
+//!
+//! # Bitcoin handshake implemented using typestate pattern
+//!
+//! ## Why Typestate?
+//! Typestate is a design pattern that allows as to leverage the type system
+//! and describe our flow. The benefit is that at compile time we will know
+//! that our flow is valid
+//!
+//! ## Bitcoin handshake
+//! The handshake of bitcoin is simple.
+//!
+//! ```text
+//! ┌─────┐               ┌──────┐
+//! │Local│               │Remote│
+//! └──┬──┘               └───┬──┘
+//!    │       Version        │
+//!    │─────────────────────►│
+//!    │       VerAck         │
+//!    │◄─────────────────────│
+//!    │       Version        │
+//!    │◄─────────────────────│
+//!    │       VerAck         │
+//!    │─────────────────────►│
+//!    │                      │
+//! ┌──┴──┐               ┌───┴──┐
+//! │Local│               │Remote│
+//! └─────┘               └──────┘
+//! ```
+//!
+//! The protocol has no guarantees for the messages order.
+//! The `Version` message of the local host is the first message that starts the handshake, but we can not
+//! know if the `VerAck` or the `Version` will come first. We just need to make sure that each `Version` message
+//! will be followed by an `VerAck` message.
+//!
+//! ## Typestate
+//! ```text
+//! Init
+//!   -> Sent Version
+//!   -> choice Receive VerAck Or Version {
+//!     VerAck
+//!       -> Wait for Version
+//!       -> Sent VerAck
+//!     Version
+//!       -> Sent VerAck
+//!       -> Wait for VerAck
+//!   }
+//!   -> Complete
+//! ```
+//!
+
 use argh::FromArgs;
 use bitcoin::p2p::message::RawNetworkMessage;
 use eyre::Result;
