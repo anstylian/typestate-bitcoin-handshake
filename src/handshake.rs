@@ -7,12 +7,17 @@ use bitcoin::{
     Network,
 };
 use eyre::Result;
+use futures::SinkExt;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::net::TcpStream;
+use tokio_stream::StreamExt;
+use tokio_util::codec::Framed;
 use tracing::{debug, instrument, warn};
+
+use crate::codec::BitcoinCodec;
 
 /// Make the address bits in VERSION message set to zero.
 const ZERO_SOCK_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
@@ -20,7 +25,7 @@ const ZERO_SOCK_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0
 /// Handshake is the core of our design. This is a wrapper that holds our current state, and a
 /// stream to communicate with the other Peers
 pub struct Handshake<S> {
-    stream: SendRecv,
+    transport: Framed<TcpStream, BitcoinCodec>,
     state: S,
 }
 
@@ -39,6 +44,7 @@ pub struct SendVersion;
 /// If [`Received::VerAck`] is received the next state will be [`WaitVersion`] where we will wait for the remote [`Received::Version`].
 /// If [`Received::Version`] is received we go to `SentAck` to sent an acknowledgement for the version we
 /// received.
+#[derive(Debug, PartialEq, Eq)]
 pub enum Received {
     /// VerArk is received
     VerAck,
@@ -61,31 +67,24 @@ pub struct WaitAck;
 /// When we reach `Completed` the handshake is done.
 pub struct Completed;
 
-pub struct SendRecv {
-    sender: UnboundedSender<RawNetworkMessage>,
-    receiver: UnboundedReceiver<RawNetworkMessage>,
-}
-
-impl SendRecv {
-    pub fn new(
-        sender: UnboundedSender<RawNetworkMessage>,
-        receiver: UnboundedReceiver<RawNetworkMessage>,
-    ) -> Self {
-        Self { sender, receiver }
+impl<S> Handshake<S> {
+    pub async fn close_stream(mut self) -> Result<()> {
+        self.transport.close().await?;
+        Ok(())
     }
 }
 
 impl Handshake<Initial> {
-    pub fn new(stream: SendRecv) -> Self {
+    pub fn new(transport: Framed<TcpStream, BitcoinCodec>) -> Self {
         Self {
-            stream,
+            transport,
             state: Initial,
         }
     }
 
     // #[instrument(skip(self), fields(self.address = %self.address))]
     #[instrument(skip(self))]
-    pub fn sent_version(self, address: SocketAddr) -> Result<Handshake<SendVersion>> {
+    pub async fn sent_version(mut self, address: SocketAddr) -> Result<Handshake<SendVersion>> {
         debug!("Sending Version");
         let version_message = get_version_message(&address)?;
         let packet = RawNetworkMessage::new(
@@ -93,10 +92,10 @@ impl Handshake<Initial> {
             NetworkMessage::Version(version_message),
         );
 
-        self.stream.sender.send(packet)?;
+        self.transport.send(packet).await?;
 
         Ok(Handshake {
-            stream: self.stream,
+            transport: self.transport,
             state: SendVersion,
         })
     }
@@ -106,13 +105,13 @@ impl Handshake<SendVersion> {
     #[instrument(skip_all)]
     pub async fn receive_message(mut self) -> Result<Handshake<Received>> {
         debug!("Wait for message");
-        while let Some(msg) = self.stream.receiver.recv().await {
+        while let Some(msg) = self.transport.next().await {
             debug!("Receive {msg:?}");
-            let msg = read_message(msg);
+            let msg = read_message(msg?);
             match msg {
                 Some(m) => {
                     return Ok(Handshake {
-                        stream: self.stream,
+                        transport: self.transport,
                         state: m,
                     })
                 }
@@ -128,7 +127,7 @@ impl Handshake<Received> {
     /// If Version is received first, use this to go at the next state to send `VerAck`.
     pub fn send_ack_state(self) -> Handshake<SentAck> {
         Handshake {
-            stream: self.stream,
+            transport: self.transport,
             state: SentAck,
         }
     }
@@ -137,7 +136,7 @@ impl Handshake<Received> {
     /// `Version`.
     pub fn receive_ver_state(self) -> Handshake<WaitVersion> {
         Handshake {
-            stream: self.stream,
+            transport: self.transport,
             state: WaitVersion,
         }
     }
@@ -150,12 +149,12 @@ impl Handshake<Received> {
 impl Handshake<SentAck> {
     /// Send `VerAck` and go to the next state to wait for `VerAck`.
     #[instrument(skip_all)]
-    pub async fn send_ack(self) -> Result<Handshake<WaitAck>> {
+    pub async fn send_ack(mut self) -> Result<Handshake<WaitAck>> {
         debug!("Sent VerAck");
         let packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
-        self.stream.sender.send(packet)?;
+        self.transport.send(packet).await?;
         return Ok(Handshake {
-            stream: self.stream,
+            transport: self.transport,
             state: WaitAck,
         });
     }
@@ -165,8 +164,8 @@ impl Handshake<WaitAck> {
     /// Get `VerAck` and complete.
     #[instrument(skip_all)]
     pub async fn receive_ack(mut self) -> Result<Handshake<Completed>> {
-        while let Some(msg) = self.stream.receiver.recv().await {
-            let msg = read_message(msg);
+        while let Some(msg) = self.transport.next().await {
+            let msg = read_message(msg?);
             match msg {
                 Some(Received::VerAck) => {
                     debug!("Received VerAck");
@@ -179,7 +178,7 @@ impl Handshake<WaitAck> {
             }
         }
         return Ok(Handshake {
-            stream: self.stream,
+            transport: self.transport,
             state: Completed,
         });
     }
@@ -188,9 +187,9 @@ impl Handshake<WaitAck> {
 impl Handshake<WaitVersion> {
     /// Wait for remote Version
     #[instrument(skip_all)]
-    pub async fn receive_version(mut self) -> Handshake<AckAfterVersion> {
-        while let Some(msg) = self.stream.receiver.recv().await {
-            let msg = read_message(msg);
+    pub async fn receive_version(mut self) -> Result<Handshake<AckAfterVersion>> {
+        while let Some(msg) = self.transport.next().await {
+            let msg = read_message(msg?);
             match msg {
                 Some(Received::VerAck) => {
                     warn!("Something is wrong. Receive VerAck twice");
@@ -203,21 +202,21 @@ impl Handshake<WaitVersion> {
             }
         }
 
-        Handshake {
-            stream: self.stream,
+        Ok(Handshake {
+            transport: self.transport,
             state: AckAfterVersion,
-        }
+        })
     }
 }
 impl Handshake<AckAfterVersion> {
     /// Sent `VerAck` and complete
     #[instrument(skip_all)]
-    pub async fn send_ack(self) -> Result<Handshake<Completed>> {
+    pub async fn send_ack(mut self) -> Result<Handshake<Completed>> {
         debug!("Sent VerAck");
         let packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
-        self.stream.sender.send(packet)?;
+        self.transport.send(packet).await?;
         return Ok(Handshake {
-            stream: self.stream,
+            transport: self.transport,
             state: Completed,
         });
     }
@@ -225,7 +224,7 @@ impl Handshake<AckAfterVersion> {
 
 /// Translate received message into our types
 #[instrument(skip_all)]
-fn read_message(package: RawNetworkMessage) -> Option<Received> {
+pub fn read_message(package: RawNetworkMessage) -> Option<Received> {
     let msg_type = package.cmd().to_string();
     match package.payload() {
         NetworkMessage::Verack => {

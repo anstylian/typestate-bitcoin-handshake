@@ -49,26 +49,18 @@
 //!   -> Complete
 //! ```
 //!
-
 use argh::FromArgs;
-use bitcoin::p2p::message::RawNetworkMessage;
-use eyre::Result;
+use eyre::{eyre, Result};
 use futures::future::join_all;
 use std::net::SocketAddr;
-use tokio::{
-    net::TcpStream,
-    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
-    time::Instant,
-};
-use tracing::{info, instrument};
+use tokio::{net::TcpStream, time::Instant};
+use tokio_util::codec::Framed;
+use tracing::{error, info, instrument};
 
-mod connection_handler;
+mod codec;
 mod handshake;
 
-use crate::{
-    connection_handler::{stream_reader, stream_writer},
-    handshake::*,
-};
+use crate::{codec::BitcoinCodec, handshake::*};
 
 #[derive(FromArgs, PartialEq, Debug)]
 /// Implementation of the bitcoin P2P handshake.
@@ -96,8 +88,15 @@ async fn main() -> Result<()> {
         .map(|a| tokio::spawn(handshake(a)))
         .collect();
 
-    join_all(streams).await;
+    let ret = join_all(streams).await;
     info!("Total elpased time {:#?}", now.elapsed());
+
+    for join_res in ret {
+        let Ok(Ok(_)) = join_res else {
+            error!("{join_res:?}");
+            continue;
+        };
+    }
 
     Ok(())
 }
@@ -106,22 +105,18 @@ async fn main() -> Result<()> {
 #[instrument]
 async fn handshake(address: SocketAddr) -> Result<()> {
     let now = Instant::now();
-    let stream = TcpStream::connect(&address).await?;
+    let stream = TcpStream::connect(&address)
+        .await
+        .map_err(|e| eyre!("remote: {address:?}, error: {e:?}"))?;
     info!("Connected at {:?}", address);
 
-    let (writer_tx, writer_rx) = mpsc::unbounded_channel();
-    let (reader_tx, reader_rx) = mpsc::unbounded_channel();
+    let transport = Framed::new(stream, BitcoinCodec {});
 
-    let (reader, writer) = stream.into_split();
+    let res = typestate(address, transport)
+        .await
+        .map_err(|e| eyre!("remote: {address:?}, error: {e:?}"))?;
 
-    let reader_jh = tokio::task::spawn(stream_reader(reader, reader_tx));
-    let writer_jh = tokio::task::spawn(stream_writer(writer, writer_rx));
-
-    typestate(address, writer_tx, reader_rx).await?;
-
-    // Not need to keep the connection longer. Just abort the tasks
-    reader_jh.abort();
-    writer_jh.abort();
+    res.close_stream().await?;
 
     info!("Handshake completed in {:#?}", now.elapsed());
 
@@ -130,11 +125,11 @@ async fn handshake(address: SocketAddr) -> Result<()> {
 
 async fn typestate(
     address: SocketAddr,
-    writer_tx: UnboundedSender<RawNetworkMessage>,
-    reader_rx: UnboundedReceiver<RawNetworkMessage>,
+    transport: Framed<TcpStream, BitcoinCodec>,
 ) -> Result<Handshake<Completed>> {
-    let messge_received = Handshake::<Initial>::new(SendRecv::new(writer_tx, reader_rx))
-        .sent_version(address)?
+    let messge_received = Handshake::<Initial>::new(transport)
+        .sent_version(address)
+        .await?
         .receive_message()
         .await?;
 
@@ -143,7 +138,7 @@ async fn typestate(
             messge_received
                 .receive_ver_state()
                 .receive_version()
-                .await
+                .await?
                 .send_ack()
                 .await?
         }
@@ -166,62 +161,59 @@ mod handshake_test {
         p2p::message::{NetworkMessage, RawNetworkMessage},
         Network,
     };
+    use futures::SinkExt;
     use std::net::{IpAddr, Ipv4Addr};
-    use tokio::{
-        sync::mpsc::{UnboundedReceiver, UnboundedSender},
-        task::JoinHandle,
-    };
+    use tokio::{net::TcpListener, task::JoinHandle};
+    use tokio_stream::StreamExt;
 
     use super::*;
 
-    struct TestSetup {
-        writer_rx: UnboundedReceiver<RawNetworkMessage>,
-        reader_tx: UnboundedSender<RawNetworkMessage>,
-        jh: JoinHandle<()>,
-    }
+    async fn test_setup(port: u16) -> (Framed<TcpStream, BitcoinCodec>, JoinHandle<()>) {
+        // Start server
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+        let server = TcpListener::bind(&address)
+            .await
+            .expect("Failed to pinf address");
 
-    fn test_setup() -> TestSetup {
-        let (writer_tx, writer_rx) = mpsc::unbounded_channel();
-        let (reader_tx, reader_rx) = mpsc::unbounded_channel();
-
-        let jh: JoinHandle<()> = tokio::task::spawn(async {
-            let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
-            typestate(address, writer_tx, reader_rx)
-                .await
-                .expect("Typestate Failed");
+        // Start client
+        let jh = tokio::task::spawn(async move {
+            handshake(address).await.expect("Handshake failed");
         });
 
-        TestSetup {
-            writer_rx,
-            reader_tx,
-            jh,
-        }
+        // Accept client
+        let (stream, _) = server.accept().await.expect("Failed to accept client");
+        let transport = Framed::new(stream, BitcoinCodec {});
+        (transport, jh)
     }
 
     #[tokio::test]
     async fn message_sequence_1() {
-        let TestSetup {
-            mut writer_rx,
-            reader_tx,
-            jh,
-        } = test_setup();
+        let (mut transport, jh) = test_setup(8080).await;
 
-        writer_rx.recv().await.expect("Failed to get Version");
+        let Some(Ok(msg)) = transport.next().await else {
+            panic!("Failed to get client version");
+        };
+        let msg = read_message(msg).expect("Failed to read message");
+        assert_eq!(msg, Received::Version);
 
         // Send VerAck
         let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
-        reader_tx
+        transport
             .send(ack_packet.clone())
+            .await
             .expect("Failed to send ACK message");
 
         // Send Version
         let remote_version = static_version_message_package();
-        reader_tx
+        transport
             .send(remote_version)
+            .await
             .expect("Failed to send message");
 
         // Recv VerAck
-        let ack = writer_rx.recv().await.expect("Failed to get ACK message");
+        let Ok(ack) = transport.next().await.expect("Failed to get ACK message") else {
+            panic!("Faild to get ack");
+        };
         assert_eq!(ack, ack_packet);
 
         jh.await.expect("task failed");
@@ -229,28 +221,31 @@ mod handshake_test {
 
     #[tokio::test]
     async fn message_sequence_2() {
-        let TestSetup {
-            mut writer_rx,
-            reader_tx,
-            jh,
-        } = test_setup();
+        let (mut transport, jh) = test_setup(8081).await;
 
-        writer_rx.recv().await.expect("Failed to get Version");
+        let Some(Ok(msg)) = transport.next().await else {
+            panic!("Failed to get client version");
+        };
+        let msg = read_message(msg).expect("Failed to read message");
+        assert_eq!(msg, Received::Version);
 
         // Send Version
         let remote_version = static_version_message_package();
-        reader_tx
+        transport
             .send(remote_version)
+            .await
             .expect("Failed to send message");
 
         // Send VerAck
         let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
-        reader_tx
+        transport
             .send(ack_packet.clone())
+            .await
             .expect("Failed to send ACK message");
 
-        // Recv VerAck
-        let ack = writer_rx.recv().await.expect("Failed to get ACK message");
+        let Some(Ok(ack)) = transport.next().await else {
+            panic!("Failed to Ack message");
+        };
         assert_eq!(ack, ack_packet);
 
         jh.await.expect("task failed");
@@ -258,28 +253,32 @@ mod handshake_test {
 
     #[tokio::test]
     async fn message_sequence_3() {
-        let TestSetup {
-            mut writer_rx,
-            reader_tx,
-            jh,
-        } = test_setup();
+        let (mut transport, jh) = test_setup(8082).await;
 
-        writer_rx.recv().await.expect("Failed to get Version");
+        let Some(Ok(msg)) = transport.next().await else {
+            panic!("Failed to get client version");
+        };
+        let msg = read_message(msg).expect("Failed to read message");
+        assert_eq!(msg, Received::Version);
 
         // Send Version
         let remote_version = static_version_message_package();
-        reader_tx
+        transport
             .send(remote_version)
+            .await
             .expect("Failed to send message");
 
         // Recv VerAck
-        let ack = writer_rx.recv().await.expect("Failed to get ACK message");
+        let Some(Ok(ack)) = transport.next().await else {
+            panic!("Failed to Ack message");
+        };
 
         // Send VerAck
         let ack_packet = RawNetworkMessage::new(Network::Bitcoin.magic(), NetworkMessage::Verack);
         assert_eq!(ack, ack_packet);
-        reader_tx
+        transport
             .send(ack_packet)
+            .await
             .expect("Failed to send ACK message");
 
         jh.await.expect("task failed");
