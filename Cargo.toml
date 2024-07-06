@@ -9,8 +9,8 @@ bitcoin = "0.32.2"
 bytes = "1.6.0"
 eyre = "0.6.12"
 futures = "0.3.30"
-tokio = { version = "1.38.0", features = ["full"] }
-tokio-stream = { version = "0.1.15", features = ["full"] }
-tokio-util = { version = "0.7.11", features = ["full"] }
+tokio = { version = "1.38.0", features = ["rt-multi-thread", "macros", "net"] }
+tokio-stream = { version = "0.1.15" }
+tokio-util = { version = "0.7.11", features = ["codec"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
