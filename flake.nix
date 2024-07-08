@@ -11,13 +11,17 @@
         pkgs = import nixpkgs { inherit system; };
         naersk-lib = pkgs.callPackage naersk {
         };
-      in
-      {
-        defaultPackage = naersk-lib.buildPackage {
-          src = ./.;
-          doDoc = true;
-          doDocFail = true;
+      in rec {
+        packages = {
+          typestate-bitcoin-handshake = naersk-lib.buildPackage {
+            src = ./.;
+            doDoc = true;
+            doDocFail = true;
+          };
+
+          default = packages.typestate-bitcoin-handshake;
         };
+
 
         devShell = with pkgs; mkShell {
           buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy ];

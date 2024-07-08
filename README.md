@@ -84,4 +84,5 @@ You can generate and view the project documentation using `cargo doc --open`.
 
 ## Nix Flake
 If you are using `nix` you can create a development environment using `nix develop`.
-To build the project using `nix` you can run `nix build`
+To build the project using `nix` you can run `nix build`.
+To generate the docs you can uses `nix build .#typestate-bitcoin-handshake.doc`.
