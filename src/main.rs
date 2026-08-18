@@ -50,12 +50,13 @@
 //! ```
 //!
 use argh::FromArgs;
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use futures::future::join_all;
 use std::net::SocketAddr;
 use tokio::{net::TcpStream, time::Instant};
 use tokio_util::codec::Framed;
 use tracing::{error, info, instrument};
+use tracing_subscriber::EnvFilter;
 
 mod codec;
 mod handshake;
@@ -73,10 +74,12 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if std::env::var_os("RUST_LOG").is_none() {
-        std::env::set_var("RUST_LOG", "warn,typestate_bitcoin_handshake=info")
-    }
-    tracing_subscriber::fmt::init();
+    let filter = if std::env::var_os("RUST_LOG").is_some() {
+        EnvFilter::from_default_env()
+    } else {
+        EnvFilter::new("warn,typestate_bitcoin_handshake=info")
+    };
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let args: Args = argh::from_env();
     info!("Arguments: {args:?}");
@@ -89,7 +92,7 @@ async fn main() -> Result<()> {
         .collect();
 
     let ret = join_all(streams).await;
-    info!("Total elpased time {:#?}", now.elapsed());
+    info!("Total elapsed time {:#?}", now.elapsed());
 
     for join_res in ret {
         let Ok(Ok(_)) = join_res else {
@@ -127,15 +130,15 @@ async fn typestate(
     address: SocketAddr,
     transport: Framed<TcpStream, BitcoinCodec>,
 ) -> Result<Handshake<Completed>> {
-    let messge_received = Handshake::<Initial>::new(transport)
+    let message_received = Handshake::<Initial>::new(transport)
         .sent_version(address)
         .await?
         .receive_message()
         .await?;
 
-    let res = match messge_received.choice() {
+    let res = match message_received.choice() {
         Received::VerAck => {
-            messge_received
+            message_received
                 .receive_ver_state()
                 .receive_version()
                 .await?
@@ -143,7 +146,7 @@ async fn typestate(
                 .await?
         }
         Received::Version => {
-            messge_received
+            message_received
                 .send_ack_state()
                 .send_ack()
                 .await?
@@ -158,8 +161,8 @@ async fn typestate(
 #[cfg(test)]
 mod handshake_test {
     use bitcoin::{
-        p2p::message::{NetworkMessage, RawNetworkMessage},
         Network,
+        p2p::message::{NetworkMessage, RawNetworkMessage},
     };
     use futures::SinkExt;
     use std::net::{IpAddr, Ipv4Addr};
@@ -212,7 +215,7 @@ mod handshake_test {
 
         // Recv VerAck
         let Ok(ack) = transport.next().await.expect("Failed to get ACK message") else {
-            panic!("Faild to get ack");
+            panic!("Failed to get ack");
         };
         assert_eq!(ack, ack_packet);
 

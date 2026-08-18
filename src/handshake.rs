@@ -1,10 +1,10 @@
 use bitcoin::{
+    Network,
     p2p::{
+        ServiceFlags,
         message::{NetworkMessage, RawNetworkMessage},
         message_network::VersionMessage,
-        ServiceFlags,
     },
-    Network,
 };
 use eyre::Result;
 use futures::SinkExt;
@@ -34,7 +34,7 @@ pub struct Handshake<S> {
 /// to the remote peer. The next state is [`SendVersion`].
 pub struct Initial;
 
-/// The version is send and we are waitting for a response.
+/// The version is send and we are waiting for a response.
 /// The response we are interested to go to the next state is [`Received::VerAck`] or [`Received::Version`].
 pub struct SendVersion;
 
@@ -113,13 +113,13 @@ impl Handshake<SendVersion> {
                     return Ok(Handshake {
                         transport: self.transport,
                         state: m,
-                    })
+                    });
                 }
                 None => { /* ignore */ }
             }
         }
 
-        eyre::bail!("Unexcpected sequence")
+        eyre::bail!("Unexpected sequence")
     }
 }
 
