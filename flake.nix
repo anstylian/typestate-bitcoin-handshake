@@ -1,29 +1,28 @@
 {
   inputs = {
-    naersk.url = "github:nix-community/naersk/master";
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, utils, naersk }:
+  outputs = { nixpkgs, utils, ... }:
     utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        naersk-lib = pkgs.callPackage naersk {
-        };
-      in rec {
-        packages = {
-          typestate-bitcoin-handshake = naersk-lib.buildPackage {
+      in
+      {
+        packages = rec {
+          typestate-bitcoin-handshake = pkgs.rustPlatform.buildRustPackage {
+            pname = "typestate-bitcoin-handshake";
+            version = "0.1.0";
             src = ./.;
-            doDoc = true;
-            doDocFail = true;
+            cargoLock.lockFile = ./Cargo.lock;
           };
 
-          default = packages.typestate-bitcoin-handshake;
+          default = typestate-bitcoin-handshake;
         };
 
 
-        devShell = with pkgs; mkShell {
+        devShells.default = with pkgs; mkShell {
           buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy ];
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
         };
